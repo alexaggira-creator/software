@@ -1,0 +1,30 @@
+========================================================================
+TALLER FINAL - DESARROLLO DE SOFTWARE SEGURO
+UNIVERSIDAD / PROGRAMA DE INGENIERÍA
+========================================================================
+
+DATOS DE LOS INTEGRANTES:
+- Integrante 1: [Nombre y Apellidos] - Identificación: [XXXXXXXX]
+- Integrante 2: [Nombre y Apellidos] - Identificación: [XXXXXXXX]
+- Integrante 3: [Nombre y Apellidos] - Identificación: [XXXXXXXX]
+
+ENLACE DE LA SUSTENTACIÓN EN VIDEO:
+[Pega aquí el enlace de YouTube del video grabado con OBS Studio]
+
+------------------------------------------------------------------------
+DESCRIPCIÓN GENERAL DEL PROYECTO:
+- API REST desarrollada con Spring Boot y Spring Security.
+- Base de datos MySQL con tablas: usuarios, roles, roles_usuarios, empleados.
+- Roles configurados: ADMIN y USER (usuario normal).
+- Credenciales iniciales de prueba:
+    * admin / admin123  (Rol ADMIN)
+    * user / user123    (Rol USER)
+- Reglas de negocio y seguridad verificadas:
+    1. Consulta de empleados abierta al público sin autenticación (GET).
+    2. Creación y edición de empleados permitida para ADMIN y USER (POST, PUT).
+    3. Eliminación de empleados EXCLUSIVA para ADMIN (DELETE).
+    4. USER recibe HTTP 403 Forbidden si intenta eliminar empleados.
+    5. USER puede crear y editar usuarios, con protección contra escalamiento al rol ADMIN.
+    6. Contraseñas protegidas mediante hash BCrypt.
+    7. Colección de Postman con 13 pruebas automatizadas mediante variables de colección.
+------------------------------------------------------------------------
