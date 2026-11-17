@@ -23,6 +23,9 @@ import java.util.stream.Collectors;
 @Service
 public class UsuarioService {
 
+    /** Roles permitidos en el sistema. No se crean roles fuera de este conjunto. */
+    private static final Set<String> ROLES_VALIDOS = Set.of("ADMIN", "USER");
+
     private final UsuarioRepository usuarioRepository;
     private final RolRepository rolRepository;
     private final PasswordEncoder passwordEncoder;
@@ -34,6 +37,8 @@ public class UsuarioService {
         this.rolRepository = rolRepository;
         this.passwordEncoder = passwordEncoder;
     }
+
+    // ─── Consultas ───────────────────────────────────────────────────────────
 
     @Transactional(readOnly = true)
     public List<UsuarioResponseDto> listarTodos() {
@@ -47,95 +52,110 @@ public class UsuarioService {
         return usuarioRepository.findById(id).map(this::convertirAResponseDto);
     }
 
+    // ─── Crear usuario ────────────────────────────────────────────────────────
+
     @Transactional
     public UsuarioResponseDto registrarUsuario(UsuarioRequestDto dto) {
+        // Validar username
         if (dto.getUsername() == null || dto.getUsername().trim().isEmpty()) {
             throw new IllegalArgumentException("El nombre de usuario es obligatorio.");
         }
         if (usuarioRepository.existsByUsername(dto.getUsername().trim())) {
             throw new IllegalArgumentException("El nombre de usuario '" + dto.getUsername().trim() + "' ya existe.");
         }
-        if (dto.getPassword() == null || dto.getPassword().trim().length() < 6) {
+        // Validar contraseña: no usar trim() — se conservan exactamente los caracteres del usuario
+        if (dto.getPassword() == null || dto.getPassword().isEmpty() || dto.getPassword().length() < 6) {
             throw new IllegalArgumentException("La contraseña debe tener al menos 6 caracteres.");
         }
 
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        boolean esAdmin = auth != null && auth.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        boolean esAdmin = esAdmin(auth);
 
         Usuario usuario = new Usuario();
         usuario.setUsername(dto.getUsername().trim());
-        usuario.setPassword(passwordEncoder.encode(dto.getPassword().trim()));
+        usuario.setPassword(passwordEncoder.encode(dto.getPassword())); // sin trim(): se cifra tal como viene
         usuario.setEnabled(true);
 
         Set<Rol> rolesAsignados = new HashSet<>();
         if (esAdmin && dto.getRoles() != null && !dto.getRoles().isEmpty()) {
+            // ADMIN puede crear con cualquier rol válido
             for (String rolNombre : dto.getRoles()) {
-                String cleanName = rolNombre.toUpperCase().replace("ROLE_", "").trim();
-                Rol rol = rolRepository.findByNombre(cleanName)
-                        .orElseGet(() -> rolRepository.save(new Rol(cleanName)));
+                Rol rol = resolverRolValido(rolNombre);
                 rolesAsignados.add(rol);
             }
+        } else if (!esAdmin && dto.getRoles() != null && !dto.getRoles().isEmpty()) {
+            // USER no puede autoasignarse ADMIN
+            for (String rolNombre : dto.getRoles()) {
+                String cleanName = normalizar(rolNombre);
+                if ("ADMIN".equals(cleanName)) {
+                    throw new AccessDeniedException("Acceso denegado: Un usuario USER no puede crear cuentas con rol ADMIN.");
+                }
+                // Solo permite USER
+                if (!"USER".equals(cleanName)) {
+                    throw new IllegalArgumentException("Rol desconocido: '" + rolNombre + "'. Roles válidos: ADMIN, USER.");
+                }
+            }
+            rolesAsignados.add(resolverRolValido("USER"));
         } else {
-            // Un usuario normal solo puede crear cuentas con rol USER (evita escalamiento de privilegios)
-            Rol rolUser = rolRepository.findByNombre("USER")
-                    .orElseGet(() -> rolRepository.save(new Rol("USER")));
-            rolesAsignados.add(rolUser);
+            // Sin roles especificados → USER por defecto
+            rolesAsignados.add(resolverRolValido("USER"));
         }
 
         usuario.setRoles(rolesAsignados);
-        Usuario guardado = usuarioRepository.save(usuario);
-        return convertirAResponseDto(guardado);
+        return convertirAResponseDto(usuarioRepository.save(usuario));
     }
+
+    // ─── Actualizar usuario ───────────────────────────────────────────────────
 
     @Transactional
     public UsuarioResponseDto actualizarUsuario(Long id, UsuarioUpdateDto dto) {
         Usuario existente = usuarioRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Usuario no encontrado con ID: " + id));
+                .orElseThrow(() -> new NoSuchElementException("Usuario no encontrado con ID: " + id));
 
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        boolean esAdmin = auth != null && auth.getAuthorities().stream()
-                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
+        boolean esAdmin = esAdmin(auth);
         String usuarioActual = (auth != null && auth.getName() != null) ? auth.getName() : "";
 
-        // Reglas de Control de Acceso Estricto para Modificación de Cuentas:
-        // 1. Si NO es ADMIN, solo puede modificar su PROPIA cuenta
+        // Control de acceso: USER solo puede modificar su propia cuenta
         if (!esAdmin) {
             if (!existente.getUsername().equalsIgnoreCase(usuarioActual)) {
-                throw new AccessDeniedException("Acceso denegado: Un usuario con rol USER únicamente puede modificar su propia cuenta.");
+                throw new AccessDeniedException(
+                        "Acceso denegado: Un usuario USER únicamente puede modificar su propia cuenta.");
             }
-            // 2. Un usuario normal nunca puede modificar una cuenta con rol ADMIN
+            // USER no puede modificar una cuenta con rol ADMIN
             boolean esCuentaAdmin = existente.getRoles().stream()
-                    .anyMatch(r -> r.getNombre().equalsIgnoreCase("ADMIN"));
+                    .anyMatch(r -> "ADMIN".equalsIgnoreCase(r.getNombre()));
             if (esCuentaAdmin) {
-                throw new AccessDeniedException("Acceso denegado: No tiene permisos para modificar una cuenta con privilegios administrativos.");
+                throw new AccessDeniedException(
+                        "Acceso denegado: No tiene permisos para modificar una cuenta con privilegios administrativos.");
             }
         }
 
-        // Actualizar username si se proporciona y cambió
+        // Actualizar username
         if (dto.getUsername() != null && !dto.getUsername().trim().isEmpty()) {
             String nuevoUsername = dto.getUsername().trim();
             if (!existente.getUsername().equalsIgnoreCase(nuevoUsername)) {
+                // Proteger username de cuenta admin principal
+                if ("admin".equalsIgnoreCase(existente.getUsername())) {
+                    throw new IllegalArgumentException(
+                            "No se permite cambiar el username de la cuenta de administración principal.");
+                }
                 if (usuarioRepository.existsByUsername(nuevoUsername)) {
                     throw new IllegalArgumentException("El nombre de usuario '" + nuevoUsername + "' ya está en uso.");
-                }
-                // Si la cuenta es 'admin' raíz, proteger el username
-                if ("admin".equalsIgnoreCase(existente.getUsername()) && !nuevoUsername.equalsIgnoreCase("admin")) {
-                    throw new IllegalArgumentException("No se permite cambiar el username de la cuenta de administración principal.");
                 }
                 existente.setUsername(nuevoUsername);
             }
         }
 
-        // Actualizar contraseña con BCrypt si se proporciona
-        if (dto.getPassword() != null && !dto.getPassword().trim().isEmpty()) {
-            if (dto.getPassword().trim().length() < 6) {
+        // Actualizar contraseña con BCrypt — sin trim(): se cifra exactamente lo que envió el usuario
+        if (dto.getPassword() != null && !dto.getPassword().isEmpty()) {
+            if (dto.getPassword().length() < 6) {
                 throw new IllegalArgumentException("La contraseña debe tener al menos 6 caracteres.");
             }
-            existente.setPassword(passwordEncoder.encode(dto.getPassword().trim()));
+            existente.setPassword(passwordEncoder.encode(dto.getPassword()));
         }
 
-        // Actualizar estado habilitado (solo ADMIN puede habilitar/deshabilitar)
+        // Actualizar estado: solo ADMIN puede cambiar enabled
         if (dto.getEnabled() != null) {
             if (esAdmin) {
                 if ("admin".equalsIgnoreCase(existente.getUsername()) && Boolean.FALSE.equals(dto.getEnabled())) {
@@ -143,33 +163,78 @@ public class UsuarioService {
                 }
                 existente.setEnabled(dto.getEnabled());
             } else if (!dto.getEnabled().equals(existente.isEnabled())) {
-                throw new AccessDeniedException("Acceso denegado: Solo el administrador puede modificar el estado de habilitación de cuentas.");
+                throw new AccessDeniedException(
+                        "Acceso denegado: Solo el administrador puede modificar el estado de habilitación de cuentas.");
             }
         }
 
-        // Actualizar roles: SOLO ADMIN puede cambiar roles; USER nunca puede cambiarse a ADMIN ni asignar roles
+        // Actualizar roles: SOLO ADMIN puede cambiar roles
         if (dto.getRoles() != null && !dto.getRoles().isEmpty()) {
             if (esAdmin) {
+                // Proteger rol ADMIN de la cuenta principal
+                if ("admin".equalsIgnoreCase(existente.getUsername())) {
+                    boolean conservaAdmin = dto.getRoles().stream()
+                            .map(this::normalizar)
+                            .anyMatch("ADMIN"::equals);
+                    if (!conservaAdmin) {
+                        throw new IllegalArgumentException(
+                                "No se puede quitar el rol ADMIN de la cuenta de administración principal.");
+                    }
+                }
                 Set<Rol> nuevosRoles = new HashSet<>();
                 for (String rolNombre : dto.getRoles()) {
-                    String cleanName = rolNombre.toUpperCase().replace("ROLE_", "").trim();
-                    Rol rol = rolRepository.findByNombre(cleanName)
-                            .orElseGet(() -> rolRepository.save(new Rol(cleanName)));
-                    nuevosRoles.add(rol);
+                    nuevosRoles.add(resolverRolValido(rolNombre));
                 }
                 existente.setRoles(nuevosRoles);
             } else {
-                // Si un usuario normal intenta alterar roles, se verifica si intenta elevar privilegios
-                boolean intentaAdmin = dto.getRoles().stream()
-                        .anyMatch(r -> r.toUpperCase().contains("ADMIN"));
-                if (intentaAdmin) {
-                    throw new AccessDeniedException("Acceso denegado: No tiene permisos para asignarse privilegios administrativos.");
-                }
+                // USER intenta modificar roles → siempre denegado
+                throw new AccessDeniedException(
+                        "Acceso denegado: No tiene permisos para modificar roles de una cuenta.");
             }
         }
 
-        Usuario actualizado = usuarioRepository.save(existente);
-        return convertirAResponseDto(actualizado);
+        return convertirAResponseDto(usuarioRepository.save(existente));
+    }
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+
+    /**
+     * Normaliza un nombre de rol:
+     * - Lanza IllegalArgumentException si el nombre es null o está en blanco.
+     * - Convierte a mayúsculas con Locale.ROOT para evitar problemas de localización.
+     * - Elimina el prefijo ROLE_ solo si aparece al principio del nombre.
+     * - Recorta espacios al inicio y al final.
+     */
+    private String normalizar(String rolNombre) {
+        if (rolNombre == null || rolNombre.isBlank()) {
+            throw new IllegalArgumentException(
+                    "El nombre del rol no puede ser nulo ni estar vacío.");
+        }
+        String upper = rolNombre.trim().toUpperCase(java.util.Locale.ROOT);
+        if (upper.startsWith("ROLE_")) {
+            upper = upper.substring(5); // elimina "ROLE_" solo si está al principio
+        }
+        return upper;
+    }
+
+    /**
+     * Busca el rol en BD. Lanza IllegalArgumentException si el nombre no es válido.
+     * NUNCA crea roles nuevos con nombres arbitrarios.
+     */
+    private Rol resolverRolValido(String rolNombre) {
+        String cleanName = normalizar(rolNombre);
+        if (!ROLES_VALIDOS.contains(cleanName)) {
+            throw new IllegalArgumentException(
+                    "Rol desconocido: '" + rolNombre + "'. Roles válidos: ADMIN, USER.");
+        }
+        return rolRepository.findByNombre(cleanName)
+                .orElseThrow(() -> new IllegalStateException(
+                        "El rol '" + cleanName + "' no existe en la base de datos."));
+    }
+
+    private boolean esAdmin(Authentication auth) {
+        return auth != null && auth.getAuthorities().stream()
+                .anyMatch(a -> a.getAuthority().equals("ROLE_ADMIN"));
     }
 
     public UsuarioResponseDto convertirAResponseDto(Usuario usuario) {
@@ -182,5 +247,12 @@ public class UsuarioService {
                 usuario.isEnabled(),
                 rolesNombres
         );
+    }
+
+    // Excepción específica para "no encontrado" (diferente de RuntimeException genérica)
+    public static class NoSuchElementException extends RuntimeException {
+        public NoSuchElementException(String message) {
+            super(message);
+        }
     }
 }

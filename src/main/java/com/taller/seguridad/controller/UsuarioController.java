@@ -30,35 +30,42 @@ public class UsuarioController {
 
     // Consultar usuario por ID
     @GetMapping("/{id}")
-    public ResponseEntity<UsuarioResponseDto> buscarPorId(@PathVariable Long id) {
+    public ResponseEntity<?> buscarPorId(@PathVariable Long id) {
         return usuarioService.buscarPorId(id)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    // Crear usuario: ADMIN y USER (Usuario normal)
+    // Crear usuario: ADMIN y USER (Usuario normal solo crea con rol USER)
     @PostMapping
     public ResponseEntity<?> registrar(@Valid @RequestBody UsuarioRequestDto dto) {
         try {
             UsuarioResponseDto usuario = usuarioService.registrarUsuario(dto);
             return new ResponseEntity<>(usuario, HttpStatus.CREATED);
+        } catch (AccessDeniedException e) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
         }
     }
 
-    // Editar usuario: ADMIN y USER (Usuario normal)
+    // Editar usuario: ADMIN y USER (con restricciones de seguridad en el servicio)
     @PutMapping("/{id}")
     public ResponseEntity<?> actualizar(@PathVariable Long id, @Valid @RequestBody UsuarioUpdateDto dto) {
         try {
             UsuarioResponseDto usuario = usuarioService.actualizarUsuario(id, dto);
             return ResponseEntity.ok(usuario);
         } catch (AccessDeniedException e) {
+            // 403: intento de modificar cuenta ajena o elevar privilegios
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(e.getMessage());
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(e.getMessage());
-        } catch (RuntimeException e) {
+        } catch (UsuarioService.NoSuchElementException e) {
+            // 404: usuario no encontrado
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
+        } catch (IllegalArgumentException e) {
+            // 400: datos inválidos de negocio (rol desconocido, contraseña corta, etc.)
+            // IllegalStateException NO se captura: indica un problema interno de configuración
+            return ResponseEntity.badRequest().body(e.getMessage());
         }
+        // RuntimeException genérica NO se captura aquí: sube como 500 para detectarla
     }
 }

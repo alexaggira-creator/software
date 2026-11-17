@@ -53,7 +53,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("*"));
+        configuration.setAllowedOrigins(List.of("http://localhost:3000"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
@@ -64,40 +64,40 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            .cors(Customizer.withDefaults())
-            .csrf(AbstractHttpConfigurer::disable)
-            .headers(headers -> headers.frameOptions(HeadersConfigurer.FrameOptionsConfig::disable))
-            .authorizeHttpRequests(auth -> auth
-                // Consola H2 para visualización y depuración local
-                .requestMatchers("/h2-console/**").permitAll()
+                .cors(Customizer.withDefaults())
+                .csrf(AbstractHttpConfigurer::disable)
+                .headers(headers -> headers.frameOptions(HeadersConfigurer.FrameOptionsConfig::disable))
+                .authorizeHttpRequests(auth -> auth
+                        // Consola H2 para visualización y depuración local
+                        .requestMatchers("/h2-console/**").permitAll()
 
-                // Reglas CRUD de Empleados:
-                // 1. Cualquiera puede consultar empleados sin autenticación
-                .requestMatchers(HttpMethod.GET, "/api/empleados/**").permitAll()
+                        // Reglas CRUD de Empleados:
+                        // 1. Cualquiera puede consultar empleados sin autenticación
+                        .requestMatchers(HttpMethod.GET, "/api/empleados/**").permitAll()
 
-                // 2. Crear empleado: permitido para ADMIN y USER
-                .requestMatchers(HttpMethod.POST, "/api/empleados").hasAnyRole("ADMIN", "USER")
+                        // 2. Crear empleado: permitido para ADMIN y USER
+                        .requestMatchers(HttpMethod.POST, "/api/empleados").hasAnyRole("ADMIN", "USER")
 
-                // 3. Editar empleado: permitido para ADMIN y USER
-                .requestMatchers(HttpMethod.PUT, "/api/empleados/**").hasAnyRole("ADMIN", "USER")
+                        // 3. Editar empleado: permitido para ADMIN y USER
+                        .requestMatchers(HttpMethod.PUT, "/api/empleados/**").hasAnyRole("ADMIN", "USER")
 
-                // 4. Eliminar empleado: EXCLUSIVO para ADMIN (USER recibe 403 Forbidden)
-                .requestMatchers(HttpMethod.DELETE, "/api/empleados/**").hasRole("ADMIN")
+                        // 4. Eliminar empleado: EXCLUSIVO para ADMIN (USER recibe 403 Forbidden)
+                        .requestMatchers(HttpMethod.DELETE, "/api/empleados/**").hasRole("ADMIN")
 
-                // Reglas de Gestión de Usuarios:
-                // Consultar usuarios: ADMIN y USER
-                .requestMatchers(HttpMethod.GET, "/api/usuarios/**").hasAnyRole("ADMIN", "USER")
+                        // Reglas de Gestión de Usuarios:
+                        // Consultar usuarios: ADMIN y USER
+                        .requestMatchers(HttpMethod.GET, "/api/usuarios/**").hasAnyRole("ADMIN", "USER")
 
-                // Crear usuarios: ADMIN y USER (USER solo puede crear con rol USER, controlado en el servicio)
-                .requestMatchers(HttpMethod.POST, "/api/usuarios").hasAnyRole("ADMIN", "USER")
+                        // Crear usuarios: ADMIN y USER (USER solo puede crear con rol USER, controlado
+                        // en el servicio)
+                        .requestMatchers(HttpMethod.POST, "/api/usuarios").hasAnyRole("ADMIN", "USER")
 
-                // Editar usuarios: ADMIN y USER (con restricciones de seguridad en el servicio)
-                .requestMatchers(HttpMethod.PUT, "/api/usuarios/**").hasAnyRole("ADMIN", "USER")
+                        // Editar usuarios: ADMIN y USER (con restricciones de seguridad en el servicio)
+                        .requestMatchers(HttpMethod.PUT, "/api/usuarios/**").hasAnyRole("ADMIN", "USER")
 
-                // Cualquier otra petición debe estar autenticada
-                .anyRequest().authenticated()
-            )
-            .httpBasic(Customizer.withDefaults());
+                        // Cualquier otra petición debe estar autenticada
+                        .anyRequest().authenticated())
+                .httpBasic(Customizer.withDefaults());
 
         return http.build();
     }

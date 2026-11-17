@@ -27,7 +27,7 @@ public class Usuario {
     @Column(nullable = false)
     private boolean enabled = true;
 
-    @ManyToMany(fetch = FetchType.EAGER)
+    @ManyToMany(fetch = FetchType.EAGER, cascade = {CascadeType.MERGE})
     @JoinTable(
         name = "roles_usuarios",
         joinColumns = @JoinColumn(name = "usuario_id"),
